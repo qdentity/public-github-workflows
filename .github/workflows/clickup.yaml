@@ -16,7 +16,7 @@ on:
         description: 'Whether to include repository name in task title'
         required: false
         type: boolean
-        default: true
+        default: false
     secrets:
       CLICKUP_API_TOKEN:
         description: 'ClickUp API token'
