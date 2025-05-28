@@ -1,0 +1,86 @@
+name: Create ClickUp Task
+
+on:
+  workflow_call:
+    inputs:
+      clickup_list_id:
+        description: 'ClickUp List ID where tasks should be created'
+        required: true
+        type: string
+      task_prefix:
+        description: 'Prefix for task titles (e.g., repo name)'
+        required: false
+        type: string
+        default: ''
+      include_repo_name:
+        description: 'Whether to include repository name in task title'
+        required: false
+        type: boolean
+        default: true
+    secrets:
+      CLICKUP_API_TOKEN:
+        description: 'ClickUp API token'
+        required: true
+
+jobs:
+  create-clickup-task:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    
+    - name: Create ClickUp Task
+      env:
+        NUMBER: ${{ github.event.issue.number }}
+        TITLE: ${{ github.event.issue.title }}
+        BODY: ${{ github.event.issue.body }}
+        URL: ${{ github.event.issue.html_url }}
+        REPO_NAME: ${{ github.repository }}
+        CLICKUP_LIST_ID: ${{ inputs.clickup_list_id }}
+      run: |
+        echo "🚀 Creating ClickUp task for issue #$NUMBER..."
+        
+        # Build task title with optional prefix and repo name
+        TASK_TITLE="[$NUMBER] $TITLE"
+        
+        if [[ "${{ inputs.include_repo_name }}" == "true" ]]; then
+          TASK_TITLE="[$REPO_NAME] $TASK_TITLE"
+        fi
+        
+        if [[ -n "${{ inputs.task_prefix }}" ]]; then
+          TASK_TITLE="${{ inputs.task_prefix }} $TASK_TITLE"
+        fi
+        
+        echo "📝 Task title: $TASK_TITLE"
+        
+        # Make the API request and capture both response and HTTP status
+        response=$(curl -X POST "https://api.clickup.com/api/v2/list/$CLICKUP_LIST_ID/task" \
+          --fail \
+          --silent \
+          --show-error \
+          --write-out "HTTPSTATUS:%{http_code}" \
+          -H "Authorization: ${{ secrets.CLICKUP_API_TOKEN }}" \
+          -H "Content-Type: application/json" \
+          -d "$(jq -n --arg name "$TASK_TITLE" --arg description "$(printf %b "GitHub Issue URL: $URL\n\nRepository: $REPO_NAME\n\n$BODY")" '$ARGS.named')")
+        
+        # Extract HTTP status and response body
+        http_code=$(echo "$response" | grep -o "HTTPSTATUS:[0-9]*" | cut -d: -f2)
+        response_body=$(echo "$response" | sed 's/HTTPSTATUS:[0-9]*$//')
+        
+        echo "📊 HTTP Status: $http_code"
+        echo "📝 Response: $response_body"
+        
+        # Check if the request was successful
+        if [[ "$http_code" == "200" || "$http_code" == "201" ]]; then
+          echo "✅ Successfully created ClickUp task!"
+          # Extract task ID from response for potential use
+          task_id=$(echo "$response_body" | jq -r '.id // empty')
+          if [[ -n "$task_id" ]]; then
+            echo "🔗 Task ID: $task_id"
+            echo "task_id=$task_id" >> $GITHUB_OUTPUT
+          fi
+        else
+          echo "❌ Failed to create ClickUp task. HTTP status: $http_code"
+          echo "Response: $response_body"
+          exit 1
+        fi
